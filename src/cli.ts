@@ -22,22 +22,7 @@ async function runRepl(agent: AgentLoop, config: AppConfig) {
 
     // Ctrl+C 停止当前对话，连续两次退出程序
     let sigintCount = 0;
-    process.on("SIGINT", () => {
-    if (agent.isProcessing) {
-        agent.abort();
-        console.log("\n  (interrupted)");
-        sigintCount = 0;
-        printUserPrompt();
-    } else {
-        sigintCount++;
-        if (sigintCount >= 2) {
-        console.log("\nBye!\n");
-        process.exit(0);
-        }
-        console.log("\n  Press Ctrl+C again to exit.");
-        printUserPrompt();
-    }
-    });
+    let lastSigintTime = 0;
 
 //   // Plan approval callback: interactive multi-option selection
 //   agent.setPlanApprovalFn((planContent: string) => {
@@ -228,13 +213,39 @@ async function runRepl(agent: AgentLoop, config: AppConfig) {
             if (e.name === "AbortError" || e.message?.includes("aborted")) {
             // Already handled by SIGINT handler
             } else {
-            printError(e.message);
+                printError(e.message);
             }
         }
 
         askQuestion();
         });
     };
+
+    // Ctrl+C: 停止当前对话，连续两次退出程序
+    const handleSigint = () => {
+        const now = Date.now();
+        // 防止 rl 和 process 同时触发 SIGINT 时重复处理
+        if (now - lastSigintTime < 100) return;
+        lastSigintTime = now;
+
+        if (agent.isProcessing) {
+            agent.abort();
+            console.log("\n  (interrupted)");
+            sigintCount = 0;
+
+        } else {
+            sigintCount++;
+            if (sigintCount >= 2) {
+                console.log("\n  Bye!\n");
+                process.exit(0);
+            }
+            console.log("\n  Press Ctrl+C again to exit.");
+            askQuestion();
+        }
+    };
+
+    rl.on("SIGINT", handleSigint);
+    process.on("SIGINT", handleSigint);
 
     askQuestion();
 

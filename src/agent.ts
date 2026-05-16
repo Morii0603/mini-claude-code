@@ -27,6 +27,7 @@ interface AgentOptions {
 export class AgentLoop {
     private anthropicClient: Anthropic;
     private abortController: AbortController | null = null;
+    private aborted: boolean = false;
     private toolRegistry: ToolRegistry;
     private thinking: boolean;
     private model: string = "deepseek-v4-flash";
@@ -64,9 +65,14 @@ export class AgentLoop {
     
     
     async chat(userMessage: string): Promise<void> {
+
+        this.aborted = false;
+        this.abortController = new AbortController();
+
         this.messages.push({ role: "user", content: userMessage });
         await this.checkAndCompact();
 
+        try {
         while (true) {
             if (this.abortController?.signal.aborted) break;
             this.runCompressionPipeline();
@@ -129,10 +135,15 @@ export class AgentLoop {
 
             // 工具结果以 user 消息推入（Anthropic API 要求）
             this.messages.push({ role: "user", content: toolResults });
-            if (!this.isSubAgent) {
-                printDivider();
-                this.autoSave();
-            }
+
+        }
+        } finally {
+            
+            this.abortController = null;
+        }
+        if (!this.isSubAgent) {
+            printDivider();
+            this.autoSave();
         }
     }
 
@@ -159,11 +170,13 @@ export class AgentLoop {
             // Stream text content (SDK high-level event)
             let firstText = true;
             stream.on("text", (text: string) => {
+                if (this.aborted) return;
                 if (firstText) { stopSpinner(); this.emitText("\n"); firstText = false; }
                 this.emitText(text);
             });
             let inThinking = false;
             stream.on("streamEvent" as any, (event: any) => {
+                if (this.aborted) return;
                 // Thinking passthrough
                 if (event.type === "content_block_start" && event.content_block?.type === "thinking") {
                     if (this.thinking) {
@@ -204,6 +217,7 @@ export class AgentLoop {
     
     // 控制台中断当前操作
     abort() {
+        this.aborted = true;
         this.abortController?.abort();
     }
     
@@ -225,6 +239,7 @@ export class AgentLoop {
 
     // 打印助手文本输出
     private emitText(text: string): void {
+    if (this.aborted) return;
     if (this.outputBuffer) {
       this.outputBuffer.push(text);
     } else {
