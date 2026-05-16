@@ -2,7 +2,7 @@ import * as os from "os";
 import { readFileSync, existsSync, readdirSync } from "fs";
 import { join, resolve, dirname } from "path";
 import { execSync } from "child_process";
-import { ToolRegistry } from "./tools/registry.js";
+import type { ToolRegistry } from "./tools/registry.js";
 
 const INCLUDE_REGEX = /^@(\.\/[^\s]+|~\/[^\s]+|\/[^\s]+)$/gm;
 const MAX_INCLUDE_DEPTH = 5;
@@ -59,14 +59,13 @@ Shell: {{shell}}
 {{claude_md}}
 {{deferred_tools}}
 `;
-export function buildSystemPrompt(): string {
+export function buildSystemPrompt(toolRegistry?: ToolRegistry): string {
     const date = new Date().toISOString().split("T")[0];
     const platform = `${os.platform()} ${os.arch()}`;
     const shell = process.platform === "win32"
     ? (process.env.ComSpec || "cmd.exe")
     : (process.env.SHELL || "/bin/sh");
-    const toolRegistry = new ToolRegistry();
-    const deferredSummaries = toolRegistry.getDeferredSummaries();
+    const deferredSummaries = toolRegistry?.getDeferredSummaries() || [];
     const deferredSection = deferredSummaries.length > 0
     ? `\n\nThe following deferred tools are available via tool_search: ${deferredSummaries.map((s) => s.name).join(", ")}. Use tool_search to fetch their full schemas when needed.`
     : "";

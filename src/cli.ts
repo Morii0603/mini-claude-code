@@ -6,9 +6,88 @@ import { ToolRegistry } from "./tools/registry.js";
 import { registerAll } from "./tools/builtin/index.js";
 import { loadConfig, getActiveModel, switchModel, runSetupWizard, addModelWizard } from "./config.js";
 import type { AppConfig } from "./config.js";
+import { initMcp, addMcpServer, listMcpServers, removeMcpServer } from "./mcp/index.js";
+import { ClientManager } from "./mcp/client-manager.js";
+import type { McpServerDef } from "./mcp/types.js";
 
 
-async function runRepl(agent: AgentLoop, config: AppConfig) {
+function parseMcpAddArgs(input: string): McpServerDef {
+  // Parse: <name> <transport> key="value" key2='{"a":1}'
+  // Splits on spaces but respects both " and ' quoted strings
+  const parts: string[] = [];
+  let i = 0;
+  while (i < input.length) {
+    // skip whitespace
+    while (i < input.length && input[i] === " ") i++;
+    if (i >= input.length) break;
+
+    let chunk: string;
+    if (input[i] === '"' || input[i] === "'") {
+      const quote = input[i]!;
+      i++; // skip opening quote
+      let start = i;
+      while (i < input.length && input[i] !== quote) i++;
+      chunk = input.slice(start, i);
+      i++; // skip closing quote
+
+      // Support escaped quotes inside the value: \" or \'
+      chunk = chunk.replace(new RegExp(`\\\\${quote}`, "g"), quote);
+    } else {
+      let start = i;
+      while (i < input.length && input[i] !== " ") i++;
+      chunk = input.slice(start, i);
+    }
+    parts.push(chunk);
+  }
+
+  if (parts.length < 2) {
+    throw new Error("Usage: /mcp add <name> <transport> [key=value ...]");
+  }
+
+  const name = parts[0]!;
+  const transport = parts[1]! as McpServerDef["transport"];
+  if (!["stdio", "streamable-http", "sse"].includes(transport)) {
+    throw new Error(`Unknown transport: "${transport}". Use stdio, streamable-http, or sse.`);
+  }
+
+  const kwargs: Record<string, string> = {};
+  for (let j = 2; j < parts.length; j++) {
+    const chunk = parts[j]!;
+    const eqIdx = chunk.indexOf("=");
+    if (eqIdx < 0) {
+      throw new Error(`Expected key=value, got: ${chunk}`);
+    }
+    const key = chunk.slice(0, eqIdx);
+    const val = chunk.slice(eqIdx + 1);
+    kwargs[key] = val;
+  }
+
+  if (transport === "stdio") {
+    if (!kwargs.command) throw new Error("stdio transport requires command=<executable>");
+    const args: string[] | undefined = kwargs.args ? JSON.parse(kwargs.args) : undefined;
+    const env: Record<string, string> | undefined = kwargs.env ? JSON.parse(kwargs.env) : undefined;
+    const result: McpServerDef = { name, transport: "stdio", command: kwargs.command };
+    if (args) (result as { args?: string[] }).args = args;
+    if (env) (result as { env?: Record<string, string> }).env = env;
+    return result;
+  }
+
+  if (!kwargs.url) throw new Error(`${transport} transport requires url=<url>`);
+  const headers: Record<string, string> | undefined = kwargs.headers
+    ? JSON.parse(kwargs.headers)
+    : undefined;
+  const result: McpServerDef = { name, transport, url: kwargs.url };
+  if (headers) (result as { headers?: Record<string, string> }).headers = headers;
+  return result;
+}
+
+async function runRepl(
+  agent: AgentLoop,
+  config: AppConfig,
+  registry: ToolRegistry,
+  mcpManager: ClientManager,
+  cwd: string,
+) {
     // 获取命令行输入
     const rl = readline.createInterface({
         input: process.stdin,
@@ -95,7 +174,84 @@ async function runRepl(agent: AgentLoop, config: AppConfig) {
             return;
         }
 
-        if (input.startsWith("/mode")) {
+        if (input === "/mcp") {
+            const servers = listMcpServers(mcpManager);
+            if (servers.length === 0) {
+              console.log("\n  No MCP servers configured.");
+              console.log("  Use /mcp add to add one.\n");
+            } else {
+              console.log(`\n  ${servers.length} MCP server(s):\n`);
+              for (const s of servers) {
+                const transport = s.config.transport;
+                const detail =
+                  transport === "stdio"
+                    ? `${s.config.command} ${(s.config.args || []).join(" ")}`
+                    : s.config.url;
+                console.log(`  ${s.name} (${transport}: ${detail})`);
+                if (s.tools.length === 0) {
+                  console.log("    (no tools)");
+                } else {
+                  for (const t of s.tools) {
+                    const desc = t.description ? ` — ${t.description}` : "";
+                    console.log(`    - mcp_${s.name}_${t.name}${desc}`);
+                  }
+                }
+                console.log();
+              }
+            }
+            askQuestion();
+            return;
+          }
+
+          if (input.startsWith("/mcp add")) {
+            const rest = input.slice(8).trim();
+            if (!rest) {
+              console.log("\n  Usage: /mcp add <name> <transport> key=value...");
+              console.log("");
+              console.log("  Transports:");
+              console.log("    stdio           - local subprocess (command, args, env)");
+              console.log("    streamable-http - HTTP with SSE Streaming");
+              console.log("    sse             - legacy Server-Sent Events (deprecated)");
+              console.log("");
+              console.log("  Examples:");
+              console.log('    /mcp add filesystem stdio command=npx args=\'["-y","@anthropic/server-filesystem","/tmp"]\'');
+              console.log('    /mcp add github streamable-http url=https://api.github.com/mcp headers=\'{"Authorization":"Bearer tok"}\'');
+              console.log('    /mcp add my-sse sse url=https://example.com/sse');
+              console.log("");
+              console.log("  For complex configs, edit .mini-claude/mcp.json directly.");
+              askQuestion();
+              return;
+            }
+
+            try {
+              const server = parseMcpAddArgs(rest);
+              await addMcpServer(registry, mcpManager, server, cwd);
+              console.log(`  MCP server "${server.name}" added and connected.`);
+            } catch (e: any) {
+              printError(e.message);
+            }
+            askQuestion();
+            return;
+          }
+
+          if (input.startsWith("/mcp remove ")) {
+            const name = input.slice(12).trim();
+            if (!name) {
+              console.log("  Usage: /mcp remove <name>");
+              askQuestion();
+              return;
+            }
+            try {
+              await removeMcpServer(registry, mcpManager, name);
+              console.log(`  MCP server "${name}" removed.`);
+            } catch (e: any) {
+              printError(e.message);
+            }
+            askQuestion();
+            return;
+          }
+
+          if (input.startsWith("/mode")) {
             const arg = input.slice(5).trim();
             const modeMap: Record<string, PermissionMode> = {
                 "": "default",
@@ -259,9 +415,14 @@ export async function main() {
     }
 
     const activeModel = getActiveModel(config);
+    const cwd = process.cwd();
 
     const registry = new ToolRegistry();
     registerAll(registry);
+
+    // Initialize MCP servers from config files
+    const mcpManager = await initMcp(registry, cwd);
+
     const agent = new AgentLoop({
         baseURL: activeModel.baseURL,
         apiKey: activeModel.apiKey,
@@ -272,5 +433,5 @@ export async function main() {
 
     printInfo(`Model: ${activeModel.name} (${activeModel.model})`);
 
-    await runRepl(agent, config);
+    await runRepl(agent, config, registry, mcpManager, cwd);
 }

@@ -23,6 +23,10 @@ export class ToolRegistry {
     this.tools.set(tool.def.name, tool);
   }
 
+  unregister(name: string): boolean {
+    return this.tools.delete(name);
+  }
+
   async execute(name: string, input: Record<string, unknown>): Promise<string> {
     const tool = this.tools.get(name);
     if (!tool) {

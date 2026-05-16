@@ -157,7 +157,7 @@ export class AgentLoop {
             const createParams: any = {
                 model: this.model,
                 max_tokens: maxOutput ,
-                system: buildSystemPrompt(),
+                system: buildSystemPrompt(this.toolRegistry),
                 tools: this.toolRegistry.getSchemas(),
                 messages: this.messages,
             };
