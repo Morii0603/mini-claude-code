@@ -66,13 +66,14 @@ export abstract class BaseAgent {
   private planFilePath: string | null = null;            // plan 文件路径
   private baseSystemPrompt: string = "";                 // 不含 plan 注入的基础提示词
   private contextCleared: boolean = false;               // 审批时是否清空了上下文
+  private planApprovalAbortController: AbortController | null = null;
 
 
   // External confirmation callback (avoids creating a second readline on stdin)
   private confirmFn?: (message: string) => Promise<boolean>;
 
   // Plan approval callback: returns { choice, feedback? }
-  private planApprovalFn?: (planContent: string) => Promise<{
+  private planApprovalFn?: (planContent: string, signal: AbortSignal) => Promise<{
     choice: "clear-and-execute" | "execute" | "manual-execute" | "keep-planning";
     feedback?: string;
   }>;
@@ -135,6 +136,7 @@ export abstract class BaseAgent {
   abort(): void {
     this.aborted = true;
     this.abortController?.abort();
+    this.planApprovalAbortController?.abort();
   }
 
   get isProcessing(): boolean {
@@ -354,7 +356,7 @@ export abstract class BaseAgent {
         const input = toolUse.input as Record<string, any>;
         if (!this.isSubAgent) printToolCall(toolUse.name, input);
 
-        const perm = checkPermission(toolUse.name, input, this.permissionMode);
+        const perm = checkPermission(toolUse.name, input, this.permissionMode, this.planFilePath ?? undefined);
         if (perm.action === "deny") {
           toolResults.push({
             type: "tool_result",
@@ -473,7 +475,7 @@ export abstract class BaseAgent {
 // ─── Plan mode helpers ──────────────────────────────────────
 
   private generatePlanFilePath(): string {
-    const dir = join(homedir(), ".claude", "plans");
+    const dir = join(process.cwd(), ".mini-claude", "plans");
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
     return join(dir, `plan-${this.sessionId}.md`);
   }
@@ -527,7 +529,9 @@ IMPORTANT: When your plan is complete, you MUST call exit_plan_mode. Do NOT ask 
 
       // Interactive approval flow
       if (this.planApprovalFn) {
-        const result = await this.planApprovalFn(planContent);
+        this.planApprovalAbortController = new AbortController();
+        const result = await this.planApprovalFn(planContent, this.planApprovalAbortController.signal);
+        this.planApprovalAbortController = null;
 
         if (result.choice === "keep-planning") {
           // User rejected — stay in plan mode, return feedback to model
@@ -579,7 +583,7 @@ IMPORTANT: When your plan is complete, you MUST call exit_plan_mode. Do NOT ask 
     return `Unknown plan mode tool: ${name}`;
   }
 
-  setPlanApprovalFn(fn: (planContent: string) => Promise<{
+  setPlanApprovalFn(fn: (planContent: string, signal: AbortSignal) => Promise<{
     choice: "clear-and-execute" | "execute" | "manual-execute" | "keep-planning";
     feedback?: string;
   }>) {

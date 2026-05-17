@@ -105,13 +105,35 @@ async function runRepl(
         input: process.stdin,
         output: process.stdout,
     });
-    agent.setPlanApprovalFn((planContent: string) => {
+    agent.setPlanApprovalFn((planContent: string, signal: AbortSignal) => {
     return new Promise((resolve) => {
+      if (signal.aborted) {
+        resolve({ choice: "keep-planning", feedback: "Cancelled" });
+        return;
+      }
+
       printPlanForApproval(planContent);
       printPlanApprovalOptions();
 
+      let cancelled = false;
+      const onAbort = () => {
+        cancelled = true;
+        signal.removeEventListener("abort", onAbort);
+        rl.write("\n");
+      };
+      signal.addEventListener("abort", onAbort, { once: true });
+
       const askChoice = () => {
+        if (cancelled) {
+          resolve({ choice: "keep-planning", feedback: "Cancelled" });
+          return;
+        }
         rl.question("  Enter choice (1-4): ", (answer) => {
+          if (cancelled) {
+            resolve({ choice: "keep-planning", feedback: "Cancelled" });
+            return;
+          }
+          signal.removeEventListener("abort", onAbort);
           const choice = answer.trim();
           if (choice === "1") {
             resolve({ choice: "clear-and-execute" });
@@ -121,6 +143,10 @@ async function runRepl(
             resolve({ choice: "manual-execute" });
           } else if (choice === "4") {
             rl.question("  Feedback (what to change): ", (feedback) => {
+              if (cancelled) {
+                resolve({ choice: "keep-planning", feedback: "Cancelled" });
+                return;
+              }
               const fb = feedback.trim();
               if (fb) {
                 resolve({ choice: "keep-planning", feedback: fb });
