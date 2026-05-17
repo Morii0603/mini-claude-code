@@ -9,6 +9,8 @@ import { AgentTool } from "./tools/builtin/agent_tool.js";
 import { loadConfig, getActiveModel, switchModel, runSetupWizard, addModelWizard } from "./config.js";
 import type { AppConfig } from "./config.js";
 import { initMcp, addMcpServer, listMcpServers, removeMcpServer } from "./mcp/index.js";
+import { getMemoryManager } from "./memory.js";
+import { getSkillRegistry } from "./skills.js";
 import { ClientManager } from "./mcp/client-manager.js";
 import type { McpServerDef } from "./mcp/types.js";
 
@@ -153,6 +155,39 @@ async function runRepl(
         // REPL commands
         if (input === "/clear") {
             agent.clearHistory();
+            askQuestion();
+            return;
+        }
+        if (input === "/memory") {
+            const mgr = getMemoryManager();
+            const memories = mgr.listMemories();
+            if (memories.length === 0) {
+              console.log("\n  No memories saved yet.");
+              console.log(`  Memory dir: ${mgr.dir}\n`);
+            } else {
+              console.log(`\n  ${memories.length} memories (${mgr.dir}):\n`);
+              for (const m of memories) {
+                console.log(`  [${m.type}] ${m.name} — ${m.description}`);
+              }
+              console.log();
+            }
+            askQuestion();
+            return;
+        }
+        if (input.startsWith("/memory delete ")) {
+            const name = input.slice(15).trim();
+            if (!name) {
+              console.log("  Usage: /memory delete <name>");
+              askQuestion();
+              return;
+            }
+            const mgr = getMemoryManager();
+            const deleted = mgr.deleteMemory(name);
+            if (deleted) {
+              console.log(`  Deleted memory '${name}'.`);
+            } else {
+              console.log(`  Memory '${name}' not found.`);
+            }
             askQuestion();
             return;
         }
@@ -306,64 +341,52 @@ async function runRepl(
             return;
         }
 
-        // if (input === "/memory") {
-        //     const memories = listMemories();
-        //     if (memories.length === 0) {
-        //     printInfo("No memories saved yet.");
-        //     } else {
-        //     printInfo(`${memories.length} memories:`);
-        //     for (const m of memories) {
-        //         console.log(`    [${m.type}] ${m.name} — ${m.description}`);
-        //     }
-        //     }
-        //     askQuestion();
-        //     return;
-        // }
-        // if (input === "/skills") {
-        //     const skills = discoverSkills();
-        //     if (skills.length === 0) {
-        //     printInfo("No skills found. Add skills to .claude/skills/<name>/SKILL.md");
-        //     } else {
-        //     printInfo(`${skills.length} skills:`);
-        //     for (const s of skills) {
-        //         const tag = s.userInvocable ? `/${s.name}` : s.name;
-        //         console.log(`    ${tag} (${s.source}) — ${s.description}`);
-        //     }
-        //     }
-        //     askQuestion();
-        //     return;
-        // }
 
-        // Skill invocation: /<skill-name> [args]
-        // if (input.startsWith("/")) {
-        //     const spaceIdx = input.indexOf(" ");
-        //     const cmdName = spaceIdx > 0 ? input.slice(1, spaceIdx) : input.slice(1);
-        //     const cmdArgs = spaceIdx > 0 ? input.slice(spaceIdx + 1) : "";
-        //     const skill = getSkillByName(cmdName);
-        //     if (skill && skill.userInvocable) {
-        //     printInfo(`Invoking skill: ${skill.name}`);
-        //     try {
-        //         if (skill.context === "fork") {
-        //         // Fork mode: use skill tool which creates a sub-agent
-        //         const forkResult = executeSkill(skill.name, cmdArgs);
-        //         if (forkResult) {
-        //             await agent.chat(`Use the skill tool to invoke "${skill.name}" with args: ${cmdArgs || "(none)"}`);
-        //         }
-        //         } else {
-        //         // Inline mode: inject resolved prompt
-        //         const resolved = resolveSkillPrompt(skill, cmdArgs);
-        //         await agent.chat(resolved);
-        //         }
-        //     } catch (e: any) {
-        //         if (e.name !== "AbortError" && !e.message?.includes("aborted")) {
-        //         printError(e.message);
-        //         }
-        //     }
-        //     askQuestion();
-        //     return;
-        //     }
-        //     // Unknown command — treat as regular input
-        // }
+        if (input === "/skills") {
+            const registry = getSkillRegistry();
+            const skills = registry.listAll();
+            if (skills.length === 0) {
+              console.log("\n  No skills found.");
+              console.log("  Add skills to .mini-claude/skills/<name>/SKILL.md\n");
+            } else {
+              console.log(`\n  ${skills.length} skills:\n`);
+              for (const s of skills) {
+                const tag = s.userInvocable ? `/${s.name}` : s.name;
+                console.log(`  ${tag} (${s.source}) — ${s.description}`);
+              }
+              console.log();
+            }
+            askQuestion();
+            return;
+        }
+
+    
+
+        // Skill invocation: /<skill_name> [args]
+        if (input.startsWith("/")) {
+            const spaceIdx = input.indexOf(" ");
+            const cmdName = spaceIdx > 0 ? input.slice(1, spaceIdx) : input.slice(1);
+            const cmdArgs = spaceIdx > 0 ? input.slice(spaceIdx + 1) : "";
+            const registry = getSkillRegistry();
+            const skillDoc = registry.getSkillByName(cmdName);
+            if (skillDoc && skillDoc.manifest.userInvocable) {
+              printInfo(`Invoking skill: ${skillDoc.manifest.name}`);
+              const body = skillDoc.body || registry.loadFullText(cmdName);
+              const prompt = cmdArgs
+                ? `${body}\n\nUser-provided arguments: ${cmdArgs}`
+                : body;
+              try {
+                await agent.chat(prompt);
+              } catch (e: any) {
+                if (e.name !== "AbortError" && !e.message?.includes("aborted")) {
+                  printError(e.message);
+                }
+              }
+              askQuestion();
+              return;
+            }
+            // Unknown skill or not user-invocable — fall through to normal chat
+          }
 
         try {
             await agent.chat(input);

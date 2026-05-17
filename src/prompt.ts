@@ -3,7 +3,8 @@ import { readFileSync, existsSync, readdirSync } from "fs";
 import { join, resolve, dirname } from "path";
 import { execSync } from "child_process";
 import type { ToolRegistry } from "./tools/registry.js";
-
+import { buildMemoryPromptSection } from "./memory.js";
+import { buildSkillDescriptions } from "./skills.js";
 const INCLUDE_REGEX = /^@(\.\/[^\s]+|~\/[^\s]+|\/[^\s]+)$/gm;
 const MAX_INCLUDE_DEPTH = 5;
 
@@ -57,6 +58,8 @@ Platform: {{platform}}
 Shell: {{shell}}
 {{git_context}}
 {{claude_md}}
+{{memory}}
+{{skills}}
 {{deferred_tools}}
 `;
 export function buildSystemPrompt(toolRegistry?: ToolRegistry): string {
@@ -77,9 +80,8 @@ export function buildSystemPrompt(toolRegistry?: ToolRegistry): string {
     .split("{{git_context}}").join(getGitContext())
     .split("{{claude_md}}").join(loadClaudeMd())
     .split("{{deferred_tools}}").join(deferredSection)
-    // To do
-    // .split("{{memory}}").join(buildMemoryPromptSection())
-    // .split("{{skills}}").join(buildSkillDescriptions())
+    .split("{{memory}}").join(buildMemoryPromptSection())
+    .split("{{skills}}").join(buildSkillDescriptions())
     // .split("{{agents}}").join(buildAgentDescriptions());
 }
 

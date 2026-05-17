@@ -1,32 +1,29 @@
 import { BaseTool } from "../types.js";
 import type { ToolDef } from "../types.js";
+import { getSkillRegistry } from "../../skills.js";
 
-const skillDef: ToolDef = {
-  name: "skill",
+const loadSkillDef: ToolDef = {
+  name: "load_skill",
   description:
-    "Invoke a registered skill by name. Skills are prompt templates loaded from .claude/skills/. Returns the skill's resolved prompt to follow.",
+    "Load the full body of a named skill into the current context. Use this before following a skill's instructions — skills are prompt templates that guide specific workflows (e.g. commit, code review).",
   input_schema: {
     type: "object",
     properties: {
-      skill_name: {
+      name: {
         type: "string",
-        description: "The name of the skill to invoke",
-      },
-      args: {
-        type: "string",
-        description: "Optional arguments to pass to the skill",
+        description: "The name of the skill to load (e.g. 'commit', 'review')",
       },
     },
-    required: ["skill_name"],
+    required: ["name"],
   },
 };
 
-export class SkillTool extends BaseTool {
-  def: ToolDef = skillDef;
+export class LoadSkillTool extends BaseTool {
+  def: ToolDef = loadSkillDef;
 
   async run(input: Record<string, unknown>): Promise<string> {
-    const skillName = input.skill_name as string;
-    const args = (input.args as string) || "";
-    return `[Skill "${skillName}" not yet implemented. Args: ${args}]`;
+    const name = input.name as string;
+    const registry = getSkillRegistry();
+    return registry.loadFullText(name);
   }
 }
