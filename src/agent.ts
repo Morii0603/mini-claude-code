@@ -64,7 +64,7 @@ export abstract class BaseAgent {
 
   private prePlanMode: PermissionMode | null = null;    // 进入前的模式（用于恢复）
   private planFilePath: string | null = null;            // plan 文件路径
-  private baseSystemPrompt: string = "";                 // 不含 plan 注入的基础提示词
+
   private contextCleared: boolean = false;               // 审批时是否清空了上下文
   private planApprovalAbortController: AbortController | null = null;
 
@@ -458,7 +458,6 @@ export abstract class BaseAgent {
     this.permissionMode = this.prePlanMode || "default";
     this.prePlanMode = null;
     this.planFilePath = null;
-    this.systemPrompt = this.baseSystemPrompt;
     printInfo(`Exited plan mode → ${this.permissionMode} mode`);
     return this.permissionMode;
   } else {
@@ -466,7 +465,7 @@ export abstract class BaseAgent {
     this.prePlanMode = this.permissionMode;
     this.permissionMode = "plan";
     this.planFilePath = this.generatePlanFilePath();
-    this.systemPrompt = this.baseSystemPrompt + this.buildPlanModePrompt();
+    this.systemPrompt = this.systemPrompt + this.buildPlanModePrompt();
 
     printInfo(`Entered plan mode. Plan file: ${this.planFilePath}`);
     return "plan";
@@ -511,7 +510,7 @@ IMPORTANT: When your plan is complete, you MUST call exit_plan_mode. Do NOT ask 
       this.prePlanMode = this.permissionMode;
       this.permissionMode = "plan";
       this.planFilePath = this.generatePlanFilePath();
-      this.systemPrompt = this.baseSystemPrompt + this.buildPlanModePrompt();
+      this.systemPrompt = this.systemPrompt + this.buildPlanModePrompt();
 
       printInfo("Entered plan mode (read-only). Plan file: " + this.planFilePath);
       return `Entered plan mode. You are now in read-only mode.\n\nYour plan file: ${this.planFilePath}\nWrite your plan to this file. This is the only file you can edit.\n\nWhen your plan is complete, call exit_plan_mode.`;
@@ -555,7 +554,7 @@ IMPORTANT: When your plan is complete, you MUST call exit_plan_mode. Do NOT ask 
         this.prePlanMode = null;
         const savedPlanPath = this.planFilePath;
         this.planFilePath = null;
-        this.systemPrompt = this.baseSystemPrompt;
+
 
 
         // Clear context if requested
@@ -574,7 +573,6 @@ IMPORTANT: When your plan is complete, you MUST call exit_plan_mode. Do NOT ask 
       this.permissionMode = this.prePlanMode || "default";
       this.prePlanMode = null;
       this.planFilePath = null;
-      this.systemPrompt = this.baseSystemPrompt;
 
       printInfo("Exited plan mode. Restored to " + this.permissionMode + " mode.");
       return `Exited plan mode. Permission mode restored to: ${this.permissionMode}\n\n## Your Plan:\n${planContent}`;
