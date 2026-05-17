@@ -197,14 +197,28 @@ export abstract class BaseAgent {
     const tool = this.tools.find((t) => t.name === name);
     if (!tool) throw new Error(`Tool not found: ${name}`);
     if (tool.name === "tool_search") {
-      return await this.executeToolSearch(input);
-    } 
-    if (name === "enter_plan_mode" || name === "exit_plan_mode") {
-      return await this.executePlanModeTool(name); 
+      try {
+        return await this.executeToolSearch(input);
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        return `Tool "tool_search" failed: ${errMsg}`;
+      }
     }
-    const result = await tool.run(input);
-    
-    return this.truncateResult(result, name);
+    if (name === "enter_plan_mode" || name === "exit_plan_mode") {
+      try {
+        return await this.executePlanModeTool(name);
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        return `Tool "${name}" failed: ${errMsg}`;
+      }
+    }
+    try {
+      const result = await tool.run(input);
+      return this.truncateResult(result, name);
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      return `Tool "${name}" failed: ${errMsg}`;
+    }
   }
 
   private executeToolSearch(input: Record<string, unknown>): Promise<string> {
@@ -362,7 +376,13 @@ export abstract class BaseAgent {
           this.confirmedPaths.add(perm.message);
         }
 
-        const result = await this.executeTool(toolUse.name, input);
+        let result: string;
+        try {
+          result = await this.executeTool(toolUse.name, input);
+        } catch (err) {
+          const errMsg = err instanceof Error ? err.message : String(err);
+          result = `Tool "${toolUse.name}" execution error: ${errMsg}`;
+        }
         if (!this.isSubAgent) printToolResult(toolUse.name, result);
         toolResults.push({ type: "tool_result", tool_use_id: toolUse.id, content: result });
       }
