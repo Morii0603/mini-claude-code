@@ -121,6 +121,16 @@ export class ToolRegistry {
     return matches;
   }
 
+  /** Return all registered tool instances. */
+  getAllTools(): Map<string, BaseTool> {
+    return this.tools;
+  }
+
+  /** Get a single tool instance by name. */
+  getTool(name: string): BaseTool | undefined {
+    return this.tools.get(name);
+  }
+
   /** Name + description of deferred tools not yet activated (for system prompt). */
   getDeferredSummaries(): Array<{ name: string; description: string }> {
     const summaries: Array<{ name: string; description: string }> = [];

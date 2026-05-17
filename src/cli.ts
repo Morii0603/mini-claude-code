@@ -1,9 +1,11 @@
 import * as readline from "readline";
 import type { PermissionMode } from "./tools/types.js";
 import { printWelcome, printUserPrompt, printError, printInfo } from "./ui.js";
-import { AgentLoop } from "./agent.js";
+import { LLMAgent } from "./agent.js";
+import { SubAgent } from "./subagent.js";
 import { ToolRegistry } from "./tools/registry.js";
 import { registerAll } from "./tools/builtin/index.js";
+import { AgentTool } from "./tools/builtin/agent_tool.js";
 import { loadConfig, getActiveModel, switchModel, runSetupWizard, addModelWizard } from "./config.js";
 import type { AppConfig } from "./config.js";
 import { initMcp, addMcpServer, listMcpServers, removeMcpServer } from "./mcp/index.js";
@@ -82,7 +84,7 @@ function parseMcpAddArgs(input: string): McpServerDef {
 }
 
 async function runRepl(
-  agent: AgentLoop,
+  agent: LLMAgent,
   config: AppConfig,
   registry: ToolRegistry,
   mcpManager: ClientManager,
@@ -423,12 +425,34 @@ export async function main() {
     // Initialize MCP servers from config files
     const mcpManager = await initMcp(registry, cwd);
 
-    const agent = new AgentLoop({
+    // Wire sub-agent: restricted tools (no "agent" tool) so sub-agents
+    // cannot spawn further sub-agents.
+    const createSubAgent = (): SubAgent => {
+      const restrictedRegistry = new ToolRegistry();
+      for (const [name, tool] of registry.getAllTools()) {
+        if (name !== "agent") {
+          restrictedRegistry.register(tool);
+        }
+      }
+      return new SubAgent({
+        baseURL: activeModel.baseURL,
+        apiKey: activeModel.apiKey,
+        model: activeModel.model,
+        thinking: true,
+        toolRegistry: restrictedRegistry,
+      });
+    };
+
+    const agentTool = registry.getTool("agent") as AgentTool;
+    agentTool.setSubAgentFactory(() => createSubAgent());
+
+    const agent = new LLMAgent({
         baseURL: activeModel.baseURL,
         apiKey: activeModel.apiKey,
         model: activeModel.model,
         thinking: true,
         toolRegistry: registry,
+        subagent: createSubAgent(),
     });
 
     printInfo(`Model: ${activeModel.name} (${activeModel.model})`);
