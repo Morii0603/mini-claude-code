@@ -10,6 +10,8 @@ import { LoadSkillTool } from "./skill.js";
 import { EnterPlanModeTool, ExitPlanModeTool } from "./plan_mode.js";
 
 import { SaveMemoryTool } from "./save_memory.js";
+import { TodoWriteTool } from "./todo_write.js";
+import { TodoReadTool } from "./todo_read.js";
 import type { BaseTool } from "../types.js";
 
 export function getAllTools(): BaseTool[] {
@@ -25,6 +27,8 @@ export function getAllTools(): BaseTool[] {
     new EnterPlanModeTool(),
     new ExitPlanModeTool(),
     new SaveMemoryTool(),
-    new LoadSkillTool()
+    new LoadSkillTool(),
+    new TodoWriteTool(),
+    new TodoReadTool()
   ];
 }

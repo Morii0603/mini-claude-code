@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
 import Anthropic from "@anthropic-ai/sdk";
@@ -48,6 +48,7 @@ export abstract class BaseAgent {
   protected tools: BaseTool[] = [];
   protected thinking: boolean;
   protected model: string;
+  protected systemPrompt: string = "";
   protected messages: Anthropic.MessageParam[] = [];
   protected effectiveWindow: number = 200000;
   protected sessionId: string;
@@ -60,6 +61,21 @@ export abstract class BaseAgent {
   protected lastApiCallTime = 0;
   protected outputBuffer: string[] | null = null;
   protected permissionMode: PermissionMode = "default";
+
+  private prePlanMode: PermissionMode | null = null;    // 进入前的模式（用于恢复）
+  private planFilePath: string | null = null;            // plan 文件路径
+  private baseSystemPrompt: string = "";                 // 不含 plan 注入的基础提示词
+  private contextCleared: boolean = false;               // 审批时是否清空了上下文
+
+
+  // External confirmation callback (avoids creating a second readline on stdin)
+  private confirmFn?: (message: string) => Promise<boolean>;
+
+  // Plan approval callback: returns { choice, feedback? }
+  private planApprovalFn?: (planContent: string) => Promise<{
+    choice: "clear-and-execute" | "execute" | "manual-execute" | "keep-planning";
+    feedback?: string;
+  }>;
 
   /** Maximum characters per tool result before truncation. 0 = no limit. */
   maxResultLength = 10_000;
@@ -79,6 +95,7 @@ export abstract class BaseAgent {
     this.tools.push(new ToolSearchTool());
     this.model = options.model;
     if (options.permissionMode) this.permissionMode = options.permissionMode;
+    this.systemPrompt = buildSystemPrompt(this.tools, this.activatedDeferred);
     
   }
 
@@ -86,9 +103,7 @@ export abstract class BaseAgent {
 
   protected abstract emitText(text: string): void;
 
-  protected getSystemPrompt(): string {
-    return buildSystemPrompt(this.tools, this.activatedDeferred);
-  }
+
 
   /** Called before each API call in the chat loop (e.g. start spinner). */
   protected onBeforeApiCall(): void {}
@@ -182,26 +197,31 @@ export abstract class BaseAgent {
     const tool = this.tools.find((t) => t.name === name);
     if (!tool) throw new Error(`Tool not found: ${name}`);
     if (tool.name === "tool_search") {
-
-      const query = (input.query as string || "").toLowerCase();
-      const deferred = this.tools.filter(t => t.defer_loading);
-      const matches = deferred.filter(t =>
-        t.name.toLowerCase().includes(query) ||
-        (t.description || "").toLowerCase().includes(query)
-      );
-
-      if (matches.length === 0) return "No matching deferred tools found.";
-      for (const m of matches) this.activatedDeferred.add(m.name);
-
-      return JSON.stringify(matches.map(t => ({
-        name: t.name,
-        description: t.description,
-        input_schema: t.input_schema,
-      })), null, 2);
+      return await this.executeToolSearch(input);
     } 
+    if (name === "enter_plan_mode" || name === "exit_plan_mode") {
+      return await this.executePlanModeTool(name); 
+    }
     const result = await tool.run(input);
     
     return this.truncateResult(result, name);
+  }
+
+  private executeToolSearch(input: Record<string, unknown>): Promise<string> {
+    // Implementation for executing tool search
+    const query = (input.query as string || "").toLowerCase();
+    const deferred = this.tools.filter(t => t.defer_loading);
+    const matches = deferred.filter(t =>
+        t.name.toLowerCase().includes(query) ||
+        (t.description || "").toLowerCase().includes(query)
+      );
+    if (matches.length === 0) return Promise.resolve("No matching deferred tools found.");
+    for (const m of matches) this.activatedDeferred.add(m.name);
+    return Promise.resolve(JSON.stringify(matches.map(t => ({
+      name: t.name,
+      description: t.description,
+      input_schema: t.input_schema,
+    })), null, 2));
   }
 
   /**
@@ -357,7 +377,7 @@ export abstract class BaseAgent {
       const createParams: any = {
         model: this.model,
         max_tokens: maxOutput,
-        system: this.getSystemPrompt(),
+        system: this.systemPrompt,
         tools: this.getSchemas(),
         messages: this.messages,
       };
@@ -407,6 +427,150 @@ export abstract class BaseAgent {
     }, this.abortController?.signal);
   }
 
+
+  // agent.ts — togglePlanMode()
+
+  togglePlanMode(): string {
+  if (this.permissionMode === "plan") {
+    // 退出：恢复原模式，清理状态，移除 plan 提示
+    this.permissionMode = this.prePlanMode || "default";
+    this.prePlanMode = null;
+    this.planFilePath = null;
+    this.systemPrompt = this.baseSystemPrompt;
+    printInfo(`Exited plan mode → ${this.permissionMode} mode`);
+    return this.permissionMode;
+  } else {
+    // 进入：保存当前模式，切换权限，生成 plan 文件，注入提示
+    this.prePlanMode = this.permissionMode;
+    this.permissionMode = "plan";
+    this.planFilePath = this.generatePlanFilePath();
+    this.systemPrompt = this.baseSystemPrompt + this.buildPlanModePrompt();
+
+    printInfo(`Entered plan mode. Plan file: ${this.planFilePath}`);
+    return "plan";
+  }
+}
+// ─── Plan mode helpers ──────────────────────────────────────
+
+  private generatePlanFilePath(): string {
+    const dir = join(homedir(), ".claude", "plans");
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    return join(dir, `plan-${this.sessionId}.md`);
+  }
+
+  private buildPlanModePrompt(): string {
+    return `
+
+# Plan Mode Active
+
+Plan mode is active. You MUST NOT make any edits (except the plan file below), run non-readonly tools, or make any changes to the system.
+
+## Plan File: ${this.planFilePath}
+Write your plan incrementally to this file using write_file or edit_file. This is the ONLY file you are allowed to edit.
+
+## Workflow
+1. **Explore**: Read code to understand the task. Use read_file, list_files, grep_search.
+2. **Design**: Design your implementation approach. Use the agent tool with type="plan" if the task is complex.
+3. **Write Plan**: Write a structured plan to the plan file including:
+   - **Context**: Why this change is needed
+   - **Steps**: Implementation steps with critical file paths
+   - **Verification**: How to test the changes
+4. **Exit**: Call exit_plan_mode when your plan is ready for user review.
+
+IMPORTANT: When your plan is complete, you MUST call exit_plan_mode. Do NOT ask the user to approve — exit_plan_mode handles that.`;
+  }
+
+
+  private async executePlanModeTool(name: string): Promise<string> {
+    if (name === "enter_plan_mode") {
+      if (this.permissionMode === "plan") {
+        return "Already in plan mode.";
+      }
+      this.prePlanMode = this.permissionMode;
+      this.permissionMode = "plan";
+      this.planFilePath = this.generatePlanFilePath();
+      this.systemPrompt = this.baseSystemPrompt + this.buildPlanModePrompt();
+
+      printInfo("Entered plan mode (read-only). Plan file: " + this.planFilePath);
+      return `Entered plan mode. You are now in read-only mode.\n\nYour plan file: ${this.planFilePath}\nWrite your plan to this file. This is the only file you can edit.\n\nWhen your plan is complete, call exit_plan_mode.`;
+    }
+
+    if (name === "exit_plan_mode") {
+      if (this.permissionMode !== "plan") {
+        return "Not in plan mode.";
+      }
+      // Read plan file content
+      let planContent = "(No plan file found)";
+      if (this.planFilePath && existsSync(this.planFilePath)) {
+        planContent = readFileSync(this.planFilePath, "utf-8");
+      }
+
+      // Interactive approval flow
+      if (this.planApprovalFn) {
+        const result = await this.planApprovalFn(planContent);
+
+        if (result.choice === "keep-planning") {
+          // User rejected — stay in plan mode, return feedback to model
+          const feedback = result.feedback || "Please revise the plan.";
+          return `User rejected the plan and wants to keep planning.\n\nUser feedback: ${feedback}\n\nPlease revise your plan based on this feedback. When done, call exit_plan_mode again.`;
+        }
+
+        // User approved — determine the target mode
+        let targetMode: PermissionMode;
+        if (result.choice === "clear-and-execute") {
+          targetMode = "acceptEdits";
+        } else if (result.choice === "execute") {
+          targetMode = "acceptEdits";
+        } else {
+          // manual-execute
+          targetMode = this.prePlanMode || "default";
+        }
+
+        // Exit plan mode
+        this.permissionMode = targetMode;
+        this.prePlanMode = null;
+        const savedPlanPath = this.planFilePath;
+        this.planFilePath = null;
+        this.systemPrompt = this.baseSystemPrompt;
+
+
+        // Clear context if requested
+        if (result.choice === "clear-and-execute") {
+          this.clearHistoryKeepSystem();
+          this.contextCleared = true; // Signal the agent loop to inject plan as user message
+          printInfo(`Plan approved. Context cleared, executing in ${targetMode} mode.`);
+          return `User approved the plan. Context was cleared. Permission mode: ${targetMode}\n\nPlan file: ${savedPlanPath}\n\n## Approved Plan:\n${planContent}\n\nProceed with implementation.`;
+        }
+
+        printInfo(`Plan approved. Executing in ${targetMode} mode.`);
+        return `User approved the plan. Permission mode: ${targetMode}\n\n## Approved Plan:\n${planContent}\n\nProceed with implementation.`;
+      }
+
+      // Fallback: no approval function, just exit directly (e.g. sub-agents)
+      this.permissionMode = this.prePlanMode || "default";
+      this.prePlanMode = null;
+      this.planFilePath = null;
+      this.systemPrompt = this.baseSystemPrompt;
+
+      printInfo("Exited plan mode. Restored to " + this.permissionMode + " mode.");
+      return `Exited plan mode. Permission mode restored to: ${this.permissionMode}\n\n## Your Plan:\n${planContent}`;
+    }
+
+    return `Unknown plan mode tool: ${name}`;
+  }
+
+  setPlanApprovalFn(fn: (planContent: string) => Promise<{
+    choice: "clear-and-execute" | "execute" | "manual-execute" | "keep-planning";
+    feedback?: string;
+  }>) {
+    this.planApprovalFn = fn;
+  }
+
+
+  private clearHistoryKeepSystem() {
+    this.messages = [];
+    this.lastInputTokenCount = 0;
+  }
   // ── interactive confirmation ──────────────────────────────────────────
 
   protected async confirmDangerous(command: string): Promise<boolean> {

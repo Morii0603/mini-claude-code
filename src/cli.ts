@@ -1,6 +1,6 @@
 import * as readline from "readline";
 import type { BaseTool, PermissionMode } from "./tools/types.js";
-import { printWelcome, printUserPrompt, printError, printInfo } from "./ui.js";
+import { printWelcome, printUserPrompt, printError, printInfo, printPlanForApproval, printPlanApprovalOptions } from "./ui.js";
 import { LLMAgent } from "./agent.js";
 import { SubAgent } from "./subagent.js";
 import { getAllTools } from "./tools/builtin/index.js";
@@ -105,7 +105,38 @@ async function runRepl(
         input: process.stdin,
         output: process.stdout,
     });
+    agent.setPlanApprovalFn((planContent: string) => {
+    return new Promise((resolve) => {
+      printPlanForApproval(planContent);
+      printPlanApprovalOptions();
 
+      const askChoice = () => {
+        rl.question("  Enter choice (1-4): ", (answer) => {
+          const choice = answer.trim();
+          if (choice === "1") {
+            resolve({ choice: "clear-and-execute" });
+          } else if (choice === "2") {
+            resolve({ choice: "execute" });
+          } else if (choice === "3") {
+            resolve({ choice: "manual-execute" });
+          } else if (choice === "4") {
+            rl.question("  Feedback (what to change): ", (feedback) => {
+              const fb = feedback.trim();
+              if (fb) {
+                resolve({ choice: "keep-planning", feedback: fb });
+              } else {
+                resolve({ choice: "keep-planning" });
+              }
+            });
+          } else {
+            console.log("  Invalid choice. Enter 1, 2, 3, or 4.");
+            askChoice();
+          }
+        });
+      };
+      askChoice();
+    });
+  });
     // Ctrl+C 停止当前对话，连续两次退出程序
     let sigintCount = 0;
     let lastSigintTime = 0;
@@ -131,6 +162,11 @@ async function runRepl(
             agent.clearHistory();
             askQuestion();
             return;
+        }
+        if (input === "/plan") {
+          const newMode = agent.togglePlanMode();
+          askQuestion();
+          return;
         }
         if (input === "/memory") {
             const mgr = getMemoryManager();

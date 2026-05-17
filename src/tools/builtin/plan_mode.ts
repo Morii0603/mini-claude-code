@@ -11,7 +11,7 @@ export class EnterPlanModeTool extends BaseTool {
   defer_loading = true;
 
   async run(_input: Record<string, unknown>): Promise<string> {
-    return "[enter_plan_mode not yet implemented]";
+    return "pass";
   }
 }
 
@@ -26,6 +26,6 @@ export class ExitPlanModeTool extends BaseTool {
   defer_loading = true;
 
   async run(_input: Record<string, unknown>): Promise<string> {
-    return "[exit_plan_mode not yet implemented]";
+    return "pass";
   }
 }
