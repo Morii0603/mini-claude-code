@@ -2,6 +2,7 @@ import { BaseTool } from "../types.js";
 import type { BaseAgent } from "../../agent.js";
 
 export class AgentTool extends BaseTool {
+  subagent: BaseAgent;
   name = "agent";
   description =
     "Launch a sub-agent to handle a task autonomously. Sub-agents have isolated context and return their result. Sub-agents cannot spawn further sub-agents.";
@@ -20,23 +21,19 @@ export class AgentTool extends BaseTool {
     required: ["description", "prompt"],
   };
 
-  private subagentFactory: (() => BaseAgent) | null = null;
-
-  /** Set the factory used to create fresh sub-agents for each invocation. */
-  setSubAgentFactory(factory: () => BaseAgent): void {
-    this.subagentFactory = factory;
+  constructor(subagent: BaseAgent) {
+    super();
+    this.subagent = subagent;
   }
 
   async run(input: Record<string, unknown>): Promise<string> {
     const description = input.description as string;
     const prompt = input.prompt as string;
 
-    if (!this.subagentFactory) {
-      return `[Sub-agent "${description}" not available — sub-agent factory not configured.]`;
-    }
+
 
     try {
-      const subagent = this.subagentFactory();
+      const subagent = this.subagent;
       const result = await subagent.run(prompt);
       return result;
     } catch (error: any) {

@@ -2,7 +2,7 @@ import * as os from "os";
 import { readFileSync, existsSync, readdirSync } from "fs";
 import { join, resolve, dirname } from "path";
 import { execSync } from "child_process";
-import type { ToolRegistry } from "./tools/registry.js";
+import type { BaseTool } from "./tools/types.js";
 import { buildMemoryPromptSection } from "./memory.js";
 import { buildSkillDescriptions } from "./skills.js";
 const INCLUDE_REGEX = /^@(\.\/[^\s]+|~\/[^\s]+|\/[^\s]+)$/gm;
@@ -62,13 +62,26 @@ Shell: {{shell}}
 {{skills}}
 {{deferred_tools}}
 `;
-export function buildSystemPrompt(toolRegistry?: ToolRegistry): string {
+export function buildSystemPrompt(
+  tools?: BaseTool[],
+  activatedDeferred?: Set<string>,
+): string {
     const date = new Date().toISOString().split("T")[0];
     const platform = `${os.platform()} ${os.arch()}`;
     const shell = process.platform === "win32"
     ? (process.env.ComSpec || "cmd.exe")
     : (process.env.SHELL || "/bin/sh");
-    const deferredSummaries = toolRegistry?.getDeferredSummaries() || [];
+    const deferredSummaries: Array<{ name: string; description: string }> = [];
+    if (tools && activatedDeferred) {
+      for (const tool of tools) {
+        if (tool.defer_loading && !activatedDeferred.has(tool.name)) {
+          deferredSummaries.push({
+            name: tool.name,
+            description: tool.description || "",
+          });
+        }
+      }
+    }
     const deferredSection = deferredSummaries.length > 0
     ? `\n\nThe following deferred tools are available via tool_search: ${deferredSummaries.map((s) => s.name).join(", ")}. Use tool_search to fetch their full schemas when needed.`
     : "";

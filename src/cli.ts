@@ -1,11 +1,9 @@
 import * as readline from "readline";
-import type { PermissionMode } from "./tools/types.js";
+import type { BaseTool, PermissionMode } from "./tools/types.js";
 import { printWelcome, printUserPrompt, printError, printInfo } from "./ui.js";
 import { LLMAgent } from "./agent.js";
 import { SubAgent } from "./subagent.js";
-import { ToolRegistry } from "./tools/registry.js";
-import { registerAll } from "./tools/builtin/index.js";
-import { AgentTool } from "./tools/builtin/agent_tool.js";
+import { getAllTools } from "./tools/builtin/index.js";
 import { loadConfig, getActiveModel, switchModel, runSetupWizard, addModelWizard } from "./config.js";
 import type { AppConfig } from "./config.js";
 import { initMcp, addMcpServer, listMcpServers, removeMcpServer } from "./mcp/index.js";
@@ -13,7 +11,6 @@ import { getMemoryManager } from "./memory.js";
 import { getSkillRegistry } from "./skills.js";
 import { ClientManager } from "./mcp/client-manager.js";
 import type { McpServerDef } from "./mcp/types.js";
-
 
 function parseMcpAddArgs(input: string): McpServerDef {
   // Parse: <name> <transport> key="value" key2='{"a":1}'
@@ -85,10 +82,21 @@ function parseMcpAddArgs(input: string): McpServerDef {
   return result;
 }
 
+/** Rebuild the agent's tools array from builtin + MCP + ToolSearchTool. */
+function rebuildTools(
+  agent: LLMAgent,
+  mcpManager: ClientManager,
+): BaseTool[] {
+  const builtinTools = getAllTools();
+  const mcpTools = mcpManager.getAllMcpTools();
+  const allTools = [...builtinTools, ...mcpTools];
+  agent.setTools(allTools);
+  return allTools;
+}
+
 async function runRepl(
   agent: LLMAgent,
   config: AppConfig,
-  registry: ToolRegistry,
   mcpManager: ClientManager,
   cwd: string,
 ) {
@@ -98,43 +106,9 @@ async function runRepl(
         output: process.stdout,
     });
 
-    // Provide confirmFn that reuses this readline instance, avoiding the
-    // classic Node.js bug where a second readline on the same stdin kills
-    // the first one when closed.
-
-
     // Ctrl+C 停止当前对话，连续两次退出程序
     let sigintCount = 0;
     let lastSigintTime = 0;
-
-//   // Plan approval callback: interactive multi-option selection
-//   agent.setPlanApprovalFn((planContent: string) => {
-//     return new Promise((resolve) => {
-//       printPlanForApproval(planContent);
-//       printPlanApprovalOptions();
-
-//       const askChoice = () => {
-//         rl.question("  Enter choice (1-4): ", (answer) => {
-//           const choice = answer.trim();
-//           if (choice === "1") {
-//             resolve({ choice: "clear-and-execute" });
-//           } else if (choice === "2") {
-//             resolve({ choice: "execute" });
-//           } else if (choice === "3") {
-//             resolve({ choice: "manual-execute" });
-//           } else if (choice === "4") {
-//             rl.question("  Feedback (what to change): ", (feedback) => {
-//               resolve({ choice: "keep-planning", feedback: feedback.trim() || undefined });
-//             });
-//           } else {
-//             console.log("  Invalid choice. Enter 1, 2, 3, or 4.");
-//             askChoice();
-//           }
-//         });
-//       };
-//       askChoice();
-//     });
-//   });
 
     const askQuestion = (): void => {
         printUserPrompt();
@@ -191,16 +165,6 @@ async function runRepl(
             askQuestion();
             return;
         }
-        // if (input === "/plan") {
-        //     const newMode = agent.togglePlanMode();
-        //     askQuestion();
-        //     return;
-        // }
-        // if (input === "/cost") {
-        //     agent.showCost();
-        //     askQuestion();
-        //     return;
-        // }
         if (input === "/compact") {
             try {
             await agent.compactConversation();
@@ -262,7 +226,8 @@ async function runRepl(
 
             try {
               const server = parseMcpAddArgs(rest);
-              await addMcpServer(registry, mcpManager, server, cwd);
+              await addMcpServer(mcpManager, server, cwd);
+              rebuildTools(agent, mcpManager);
               console.log(`  MCP server "${server.name}" added and connected.`);
             } catch (e: any) {
               printError(e.message);
@@ -279,7 +244,8 @@ async function runRepl(
               return;
             }
             try {
-              await removeMcpServer(registry, mcpManager, name);
+              await removeMcpServer(mcpManager, name);
+              rebuildTools(agent, mcpManager);
               console.log(`  MCP server "${name}" removed.`);
             } catch (e: any) {
               printError(e.message);
@@ -343,8 +309,8 @@ async function runRepl(
 
 
         if (input === "/skills") {
-            const registry = getSkillRegistry();
-            const skills = registry.listAll();
+            const skillReg = getSkillRegistry();
+            const skills = skillReg.listAll();
             if (skills.length === 0) {
               console.log("\n  No skills found.");
               console.log("  Add skills to .mini-claude/skills/<name>/SKILL.md\n");
@@ -360,7 +326,7 @@ async function runRepl(
             return;
         }
 
-    
+
 
         try {
             await agent.chat(input);
@@ -405,6 +371,7 @@ async function runRepl(
     askQuestion();
 
 }
+
 export async function main() {
     printWelcome();
 
@@ -416,44 +383,40 @@ export async function main() {
     const activeModel = getActiveModel(config);
     const cwd = process.cwd();
 
-    const registry = new ToolRegistry();
-    registerAll(registry);
+    // Builtin tools
+    const builtinTools = getAllTools();
 
-    // Initialize MCP servers from config files
-    const mcpManager = await initMcp(registry, cwd);
+    // Initialize MCP and get MCP tools
+    const mcpManager = await initMcp(cwd);
+    const mcpTools = mcpManager.getAllMcpTools();
 
-    // Wire sub-agent: restricted tools (no "agent" tool) so sub-agents
-    // cannot spawn further sub-agents.
-    
-    const createSubAgent = (): SubAgent => {
-      const restrictedRegistry = new ToolRegistry();
-      for (const [name, tool] of registry.getAllTools()) {
-        if (name !== "agent") {
-          restrictedRegistry.register(tool);
-        }
-      }
-      return new SubAgent({
-        baseURL: activeModel.baseURL,
-        apiKey: activeModel.apiKey,
-        model: activeModel.model,
-        thinking: true,
-        toolRegistry: restrictedRegistry,
-      });
-    };
+    // Combine for initial agent creation
+    const allTools = [...builtinTools, ...mcpTools];
 
-    const agentTool = registry.getTool("agent") as AgentTool;
-    agentTool.setSubAgentFactory(() => createSubAgent());
+    // Wire sub-agent: restricted tools (no "agent" tool)
 
+    // Create the main agent
     const agent = new LLMAgent({
         baseURL: activeModel.baseURL,
         apiKey: activeModel.apiKey,
         model: activeModel.model,
         thinking: true,
-        toolRegistry: registry,
-        subagent: createSubAgent(),
+        tools: allTools,
+        subagent: new SubAgent({
+          baseURL: activeModel.baseURL,
+          apiKey: activeModel.apiKey,
+          model: activeModel.model,
+          thinking: true,
+          tools: allTools.filter((t) => t.name !== "agent"),
+        }),
     });
+
+    // Register ToolSearchTool with the agent's state
+
+
+
 
     printInfo(`Model: ${activeModel.name} (${activeModel.model})`);
 
-    await runRepl(agent, config, registry, mcpManager, cwd);
+    await runRepl(agent, config, mcpManager, cwd);
 }

@@ -1,8 +1,12 @@
+import { existsSync, mkdirSync, writeFileSync } from "fs";
+import { homedir } from "os";
+import { join } from "path";
 import Anthropic from "@anthropic-ai/sdk";
 import chalk from "chalk";
 import * as readline from "readline";
 import { randomUUID } from "crypto";
-import type { BaseTool, PermissionMode, ToolRegistry } from "./tools/index.js";
+
+import type { BaseTool, PermissionMode } from "./tools/index.js";
 import { checkPermission } from "./tools/permission.js";
 import { buildSystemPrompt } from "./prompt.js";
 import {
@@ -17,6 +21,8 @@ import {
   stopSpinner,
 } from "./ui.js";
 import { saveSession } from "./session.js";
+import { AgentTool } from "./tools/builtin/agent_tool.js";
+import { ToolSearchTool } from "./tools/builtin/tool_search.js";
 
 const SNIPPABLE_TOOLS = new Set(["read_file", "grep_search", "list_files", "run_shell"]);
 const SNIP_PLACEHOLDER = "[Content snipped - re-read if needed]";
@@ -31,7 +37,7 @@ export interface BaseAgentOptions {
   apiKey: string;
   model: string;
   thinking: boolean;
-  toolRegistry: ToolRegistry;
+  tools: BaseTool[];
   permissionMode?: PermissionMode;
 }
 
@@ -39,7 +45,6 @@ export abstract class BaseAgent {
   protected anthropicClient: Anthropic;
   protected abortController: AbortController | null = null;
   protected aborted: boolean = false;
-  protected toolRegistry: ToolRegistry;
   protected tools: BaseTool[] = [];
   protected thinking: boolean;
   protected model: string;
@@ -56,6 +61,12 @@ export abstract class BaseAgent {
   protected outputBuffer: string[] | null = null;
   protected permissionMode: PermissionMode = "default";
 
+  /** Maximum characters per tool result before truncation. 0 = no limit. */
+  maxResultLength = 10_000;
+
+  /** Deferred tools activated via tool_search. Shared with ToolSearchTool. */
+  activatedDeferred = new Set<string>();
+
   constructor(options: BaseAgentOptions) {
     this.sessionStartTime = new Date().toISOString();
     this.sessionId = randomUUID().slice(0, 8);
@@ -64,9 +75,11 @@ export abstract class BaseAgent {
       apiKey: options.apiKey,
     });
     this.thinking = options.thinking;
-    this.toolRegistry = options.toolRegistry;
+    this.tools = options.tools;
+    this.tools.push(new ToolSearchTool());
     this.model = options.model;
     if (options.permissionMode) this.permissionMode = options.permissionMode;
+    
   }
 
   // ── hooks for subclasses ──────────────────────────────────────────────
@@ -74,7 +87,7 @@ export abstract class BaseAgent {
   protected abstract emitText(text: string): void;
 
   protected getSystemPrompt(): string {
-    return buildSystemPrompt(this.toolRegistry);
+    return buildSystemPrompt(this.tools, this.activatedDeferred);
   }
 
   /** Called before each API call in the chat loop (e.g. start spinner). */
@@ -117,6 +130,16 @@ export abstract class BaseAgent {
     this.permissionMode = mode;
   }
 
+  /** Replace the entire tools array (e.g. after MCP server changes). */
+  setTools(tools: BaseTool[]): void {
+    this.tools = tools;
+  }
+
+  /** Append a tool to the existing tools array. */
+  addTool(tool: BaseTool): void {
+    this.tools.push(tool);
+  }
+
 
   getModel(): string {
     return this.model;
@@ -148,6 +171,121 @@ export abstract class BaseAgent {
     ];
     if (lastUserMsg && lastUserMsg.role === "user") this.messages.push(lastUserMsg);
     this.lastInputTokenCount = 0;
+  }
+
+  // ── tool helpers ──────────────────────────────────────────────────────
+
+
+
+  /** Execute a tool by name and return its result string. */
+  async executeTool(name: string, input: Record<string, unknown>): Promise<string> {
+    const tool = this.tools.find((t) => t.name === name);
+    if (!tool) throw new Error(`Tool not found: ${name}`);
+    if (tool.name === "tool_search") {
+
+      const query = (input.query as string || "").toLowerCase();
+      const deferred = this.tools.filter(t => t.defer_loading);
+      const matches = deferred.filter(t =>
+        t.name.toLowerCase().includes(query) ||
+        (t.description || "").toLowerCase().includes(query)
+      );
+
+      if (matches.length === 0) return "No matching deferred tools found.";
+      for (const m of matches) this.activatedDeferred.add(m.name);
+
+      return JSON.stringify(matches.map(t => ({
+        name: t.name,
+        description: t.description,
+        input_schema: t.input_schema,
+      })), null, 2);
+    } 
+    const result = await tool.run(input);
+    
+    return this.truncateResult(result, name);
+  }
+
+  /**
+   * Truncate long results keeping both head and tail, since important
+   * output (compile errors, test summaries) often appears at the end.
+   * The truncation hint tells the LLM how to retrieve the full content.
+   */
+  private truncateResult(result: string, toolName: string): string {
+    const limit = this.maxResultLength;
+    if (limit <= 0 || result.length <= limit) return result;
+
+    const dir = join(homedir(), ".mini-claude", "tool_outputs");
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+
+    const ts = new Date().toISOString().replace(/[:.]/g, "-");
+    const filename = `${toolName}_${ts}.output`;
+    const filepath = join(dir, filename);
+    writeFileSync(filepath, result);
+
+    const reserved = 300;
+    const headRatio = 0.55;
+    const headLen = Math.floor((limit - reserved) * headRatio);
+    const tailLen = limit - reserved - headLen;
+
+    const head = result.slice(0, headLen);
+    const tail = result.slice(-tailLen);
+    const removed = result.length - headLen - tailLen;
+
+    const banner = [
+      "",
+      `... [${toolName} output truncated: hidden ${removed.toLocaleString()} of ${result.length.toLocaleString()} characters. Full output saved to ${filepath}] ...`,
+      "",
+    ].join("\n");
+
+    return `${head}${banner}${tail}`;
+  }
+
+  /** Build Anthropic.Tool schemas for the API: non-deferred + activated deferred. */
+  getSchemas(): Anthropic.Tool[] {
+    const schemas: Anthropic.Tool[] = [];
+    for (const tool of this.tools) {
+      if (tool.defer_loading && !this.activatedDeferred.has(tool.name)) continue;
+      const schema: Anthropic.Tool = {
+        name: tool.name,
+        input_schema: tool.input_schema,
+      };
+      if (tool.description) schema.description = tool.description;
+      schemas.push(schema);
+    }
+    return schemas;
+  }
+
+  /** Name + description of deferred tools not yet activated (for system prompt). */
+  getDeferredSummaries(): Array<{ name: string; description: string }> {
+    const summaries: Array<{ name: string; description: string }> = [];
+    for (const tool of this.tools) {
+      if (tool.defer_loading && !this.activatedDeferred.has(tool.name)) {
+        summaries.push({
+          name: tool.name,
+          description: tool.description || "",
+        });
+      }
+    }
+    return summaries;
+  }
+
+  /**
+   * Search among deferred tools, activate matches, and return their
+   * full schemas so the LLM can use them in the next turn.
+   */
+  searchAndActivate(query: string): Anthropic.Tool[] {
+    const q = query.toLowerCase();
+    const matches: Anthropic.Tool[] = [];
+    for (const tool of this.tools) {
+      if (!tool.defer_loading) continue;
+      if (
+        tool.name.toLowerCase().includes(q) ||
+        tool.description?.toLowerCase().includes(q)
+      ) {
+        this.activatedDeferred.add(tool.name);
+        matches.push(tool);
+      }
+    }
+    return matches;
   }
 
   // ── core chat loop ────────────────────────────────────────────────────
@@ -204,7 +342,7 @@ export abstract class BaseAgent {
           this.confirmedPaths.add(perm.message);
         }
 
-        const result = await this.toolRegistry.execute(toolUse.name, input);
+        const result = await this.executeTool(toolUse.name, input);
         if (!this.isSubAgent) printToolResult(toolUse.name, result);
         toolResults.push({ type: "tool_result", tool_use_id: toolUse.id, content: result });
       }
@@ -220,7 +358,7 @@ export abstract class BaseAgent {
         model: this.model,
         max_tokens: maxOutput,
         system: this.getSystemPrompt(),
-        tools: this.toolRegistry.getSchemas(),
+        tools: this.getSchemas(),
         messages: this.messages,
       };
       if (this.thinking) {
@@ -448,6 +586,10 @@ export class LLMAgent extends BaseAgent {
     super(options);
     if (options.subagent !== undefined) {
       this.subagent = options.subagent;
+      this.addTool(
+        new AgentTool(this.subagent)
+      )
+
     }
   }
 

@@ -1,18 +1,12 @@
 import { loadMcpConfig, saveMcpConfig } from "./config.js";
 import { ClientManager } from "./client-manager.js";
-import { McpTool } from "./mcp-tool.js";
-import { ToolRegistry } from "../tools/registry.js";
 import type { McpServerDef } from "./types.js";
-import type Anthropic from "@anthropic-ai/sdk";
 
 export type { McpServerDef, McpConfig } from "./types.js";
 export { loadMcpConfig, saveMcpConfig } from "./config.js";
 export { ClientManager } from "./client-manager.js";
 
-export async function initMcp(
-  registry: ToolRegistry,
-  cwd: string,
-): Promise<ClientManager> {
+export async function initMcp(cwd: string): Promise<ClientManager> {
   const config = loadMcpConfig(cwd);
   const manager = new ClientManager();
 
@@ -20,24 +14,7 @@ export async function initMcp(
 
   for (const server of config.servers) {
     try {
-      const tools = await manager.connectServer(server);
-      for (const tool of tools) {
-        const fullName = manager.getToolFullName(server.name, tool.toolName);
-        const { name, description, inputSchema } = buildMcpToolDef(
-          fullName,
-          server.name,
-          tool,
-        );
-        const mcpTool = new McpTool(
-          name,
-          description,
-          inputSchema,
-          async (input) => {
-            return manager.callTool(server.name, tool.toolName, input);
-          },
-        );
-        registry.register(mcpTool);
-      }
+      await manager.connectServer(server);
       results.push({ server: server.name, ok: true });
     } catch (e: any) {
       results.push({ server: server.name, ok: false, error: e.message });
@@ -61,44 +38,18 @@ export async function initMcp(
 }
 
 export async function addMcpServer(
-  registry: ToolRegistry,
   manager: ClientManager,
   server: McpServerDef,
   cwd: string,
 ): Promise<void> {
-  const tools = await manager.connectServer(server);
-
-  for (const tool of tools) {
-    const fullName = manager.getToolFullName(server.name, tool.toolName);
-    const { name, description, inputSchema } = buildMcpToolDef(
-      fullName,
-      server.name,
-      tool,
-    );
-    const mcpTool = new McpTool(
-      name,
-      description,
-      inputSchema,
-      async (input) => {
-        return manager.callTool(server.name, tool.toolName, input);
-      },
-    );
-    registry.register(mcpTool);
-  }
-
+  await manager.connectServer(server);
   saveMcpConfig(server, cwd);
 }
 
 export async function removeMcpServer(
-  registry: ToolRegistry,
   manager: ClientManager,
   serverName: string,
 ): Promise<void> {
-  const tools = manager.getTools(serverName);
-  for (const tool of tools) {
-    const fullName = manager.getToolFullName(serverName, tool.toolName);
-    registry.unregister(fullName);
-  }
   await manager.disconnectServer(serverName);
 }
 
@@ -120,25 +71,4 @@ export function listMcpServers(manager: ClientManager): Array<{
       return result;
     }),
   }));
-}
-
-function buildMcpToolDef(
-  fullName: string,
-  serverName: string,
-  tool: { toolName: string; description?: string | undefined; inputSchema: Record<string, unknown> },
-): { name: string; description: string; inputSchema: Anthropic.Tool.InputSchema } {
-  const schema = tool.inputSchema;
-  const inputSchema: Record<string, unknown> = {};
-  if (schema.type === undefined) {
-    inputSchema.type = "object";
-  }
-  for (const key of Object.keys(schema)) {
-    inputSchema[key] = (schema as Record<string, unknown>)[key];
-  }
-
-  return {
-    name: fullName,
-    description: tool.description || `MCP tool: ${tool.toolName} from ${serverName}`,
-    inputSchema: inputSchema as Anthropic.Tool.InputSchema,
-  };
 }

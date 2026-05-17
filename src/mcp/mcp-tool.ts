@@ -6,7 +6,7 @@ export class McpTool extends BaseTool {
   description: string;
   input_schema: Anthropic.Tool.InputSchema;
   defer_loading = true;
-  private runner: (input: Record<string, unknown>) => Promise<string>;
+  #runner: (input: Record<string, unknown>) => Promise<string>;
 
   constructor(
     name: string,
@@ -18,10 +18,10 @@ export class McpTool extends BaseTool {
     this.name = name;
     this.description = description;
     this.input_schema = inputSchema;
-    this.runner = runner;
+    this.#runner = runner;
   }
 
   async run(input: Record<string, unknown>): Promise<string> {
-    return this.runner(input);
+    return this.#runner(input);
   }
 }

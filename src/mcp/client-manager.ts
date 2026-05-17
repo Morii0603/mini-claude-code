@@ -4,6 +4,8 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { McpServerDef } from "./types.js";
+import { McpTool } from "./mcp-tool.js";
+import type Anthropic from "@anthropic-ai/sdk";
 
 interface McpServerState {
   config: McpServerDef;
@@ -90,6 +92,42 @@ export class ClientManager {
       all.push(...state.tools);
     }
     return all;
+  }
+
+  /** Build an McpTool instance from tool info metadata. */
+  buildMcpTool(info: McpToolInfo): McpTool {
+    const fullName = makeToolFullName(info.serverName, info.toolName);
+    const schema = info.inputSchema;
+    const inputSchema: Record<string, unknown> = {};
+    if (schema.type === undefined) {
+      inputSchema.type = "object";
+    }
+    for (const key of Object.keys(schema)) {
+      inputSchema[key] = (schema as Record<string, unknown>)[key];
+    }
+    return new McpTool(
+      fullName,
+      info.description || `MCP tool: ${info.toolName} from ${info.serverName}`,
+      inputSchema as Anthropic.Tool.InputSchema,
+      async (input) => {
+        return this.callTool(info.serverName, info.toolName, input);
+      },
+    );
+  }
+
+  /** Return all MCP tools as McpTool instances. */
+  getAllMcpTools(): McpTool[] {
+    const tools: McpTool[] = [];
+    for (const info of this.getAllTools()) {
+      tools.push(this.buildMcpTool(info));
+    }
+    return tools;
+  }
+
+  /** Return McpTool instances for a specific server. */
+  getMcpToolsForServer(serverName: string): McpTool[] {
+    const infos = this.getTools(serverName);
+    return infos.map((info) => this.buildMcpTool(info));
   }
 
   getToolFullName(serverName: string, toolName: string): string {
