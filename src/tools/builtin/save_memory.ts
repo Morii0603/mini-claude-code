@@ -1,13 +1,12 @@
 import { BaseTool } from "../types.js";
-import type { ToolDef } from "../types.js";
 import { getMemoryManager } from "../../memory.js";
 
-const saveMemoryDef: ToolDef = {
-  name: "save_memory",
-  description:
-    "Save a persistent memory to the file-based memory system. Memories persist across sessions and help Claude remember user preferences, feedback, project context, and external references.",
-  input_schema: {
-    type: "object",
+export class SaveMemoryTool extends BaseTool {
+  name = "save_memory";
+  description =
+    "Save a persistent memory to the file-based memory system. Memories persist across sessions and help Claude remember user preferences, feedback, project context, and external references.";
+  input_schema = {
+    type: "object" as const,
     properties: {
       name: {
         type: "string",
@@ -28,11 +27,7 @@ const saveMemoryDef: ToolDef = {
       },
     },
     required: ["name", "description", "type", "content"],
-  },
-};
-
-export class SaveMemoryTool extends BaseTool {
-  def: ToolDef = saveMemoryDef;
+  };
 
   async run(input: Record<string, unknown>): Promise<string> {
     const name = input.name as string;

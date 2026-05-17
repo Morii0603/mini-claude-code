@@ -1,7 +1,7 @@
 import { readdirSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { BaseTool } from "../types.js";
-import type { ToolDef } from "../types.js";
+import type { InputSchema } from "../types.js";
 
 /** Minimal glob-to-regex converter for basic patterns. */
 function globToRegex(pattern: string): RegExp {
@@ -59,26 +59,24 @@ function walkDir(
 }
 
 export class ListFilesTool extends BaseTool {
-  def: ToolDef = {
-    name: "list_files",
-    description:
-      "List files matching a glob pattern. Returns matching file paths.",
-    input_schema: {
-      type: "object",
-      properties: {
-        pattern: {
-          type: "string",
-          description:
-            'Glob pattern to match files (e.g., "**/*.ts", "src/**/*")',
-        },
-        path: {
-          type: "string",
-          description:
-            "Base directory to search from. Defaults to current directory.",
-        },
+  name = "list_files";
+  description =
+    "List files matching a glob pattern. Returns matching file paths.";
+  input_schema: InputSchema = {
+    type: "object",
+    properties: {
+      pattern: {
+        type: "string",
+        description:
+          'Glob pattern to match files (e.g., "**/*.ts", "src/**/*")',
       },
-      required: ["pattern"],
+      path: {
+        type: "string",
+        description:
+          "Base directory to search from. Defaults to current directory.",
+      },
     },
+    required: ["pattern"],
   };
 
   async run(input: Record<string, unknown>): Promise<string> {

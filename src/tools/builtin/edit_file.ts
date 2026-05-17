@@ -1,14 +1,12 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { BaseTool } from "../types.js";
-import type { ToolDef } from "../types.js";
 import { findActualString, generateDiff } from "./edit-utils.js";
-
+import type { InputSchema } from "../types.js";
 export class EditFileTool extends BaseTool {
-  def: ToolDef = {
-    name: "edit_file",
-    description:
-      "Edit a file by replacing an exact string match with new content. The old_string must match exactly (including whitespace and indentation).",
-    input_schema: {
+
+    name =  "edit_file"
+    description = "Edit a file by replacing an exact string match with new content. The old_string must match exactly (including whitespace and indentation).";
+    input_schema : InputSchema = {
       type: "object",
       properties: {
         file_path: {
@@ -25,8 +23,9 @@ export class EditFileTool extends BaseTool {
         },
       },
       required: ["file_path", "old_string", "new_string"],
-    },
-  };
+    };
+    defer_loading = false;
+
 
   async run(input: Record<string, unknown>): Promise<string> {
     const filePath = input.file_path as string;

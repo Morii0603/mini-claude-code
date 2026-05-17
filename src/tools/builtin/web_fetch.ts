@@ -1,23 +1,21 @@
 import { BaseTool } from "../types.js";
-import type { ToolDef } from "../types.js";
+import type { InputSchema } from "../types.js";
 
 export class WebFetchTool extends BaseTool {
-  def: ToolDef = {
-    name: "web_fetch",
-    description:
-      "Fetch a URL and return its content as text. For HTML pages, tags are stripped to return readable text. For JSON/text responses, content is returned directly.",
-    input_schema: {
-      type: "object",
-      properties: {
-        url: { type: "string", description: "The URL to fetch" },
-        max_length: {
-          type: "number",
-          description:
-            "Maximum content length in characters (default 50000)",
-        },
+  name = "web_fetch";
+  description =
+    "Fetch a URL and return its content as text. For HTML pages, tags are stripped to return readable text. For JSON/text responses, content is returned directly.";
+  input_schema: InputSchema = {
+    type: "object",
+    properties: {
+      url: { type: "string", description: "The URL to fetch" },
+      max_length: {
+        type: "number",
+        description:
+          "Maximum content length in characters (default 50000)",
       },
-      required: ["url"],
     },
+    required: ["url"],
   };
 
   async run(input: Record<string, unknown>): Promise<string> {

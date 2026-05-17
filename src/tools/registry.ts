@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, writeFileSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
 import type Anthropic from "@anthropic-ai/sdk";
-import type { BaseTool, ToolDef } from "./types.js";
+import type { BaseTool } from "./types.js";
 
 const TOOL_OUTPUT_DIR = join(homedir(), ".mini-claude", "tool_outputs");
 
@@ -17,10 +17,10 @@ export class ToolRegistry {
   maxResultLength = 10_000;
 
   register(tool: BaseTool): void {
-    if (this.tools.has(tool.def.name)) {
-      throw new Error(`Tool already registered: ${tool.def.name}`);
+    if (this.tools.has(tool.name)) {
+      throw new Error(`Tool already registered: ${tool.name}`);
     }
-    this.tools.set(tool.def.name, tool);
+    this.tools.set(tool.name, tool);
   }
 
   unregister(name: string): boolean {
@@ -71,7 +71,7 @@ export class ToolRegistry {
   }
 
   // ─── Deferred tool activation ────────────────────────────────────────
-  // Tools with def.deferred=true are NOT sent to the API until activated.
+  // Tools with defer_loading=true are NOT sent to the API until activated.
   // The model activates them via tool_search — only name+description is shown
   // in the system prompt, saving thousands of input tokens per turn.
   private activatedDeferred = new Set<string>();
@@ -80,10 +80,10 @@ export class ToolRegistry {
   getSchemas(): Anthropic.Tool[] {
     const schemas: Anthropic.Tool[] = [];
     for (const tool of this.tools.values()) {
-      if (!tool.def.deferred) {
-        schemas.push(tool.def);
-      } else if (this.activatedDeferred.has(tool.def.name)) {
-        schemas.push(tool.def);
+      if (!tool.defer_loading) {
+        schemas.push(tool);
+      } else if (this.activatedDeferred.has(tool.name)) {
+        schemas.push(tool);
       }
       // else: deferred & not activated → suppressed
     }
@@ -91,8 +91,8 @@ export class ToolRegistry {
   }
 
   /** Return schema for a single tool by name, including deferred ones. */
-  getSchema(name: string): ToolDef | undefined {
-    return this.tools.get(name)?.def;
+  getSchema(name: string): Anthropic.Tool | undefined {
+    return this.tools.get(name);
   }
 
   /** List names of all registered tools (including deferred). */
@@ -100,22 +100,21 @@ export class ToolRegistry {
     return [...this.tools.keys()];
   }
 
-  
   /**
    * Search among deferred tools, activate matches, and return their
    * full schemas so the LLM can use them in the next turn.
    */
-  searchAndActivate(query: string): ToolDef[] {
+  searchAndActivate(query: string): Anthropic.Tool[] {
     const q = query.toLowerCase();
-    const matches: ToolDef[] = [];
+    const matches: Anthropic.Tool[] = [];
     for (const tool of this.tools.values()) {
-      if (!tool.def.deferred) continue;
+      if (!tool.defer_loading) continue;
       if (
-        tool.def.name.toLowerCase().includes(q) ||
-        tool.def.description?.toLowerCase().includes(q)
+        tool.name.toLowerCase().includes(q) ||
+        tool.description?.toLowerCase().includes(q)
       ) {
-        this.activatedDeferred.add(tool.def.name);
-        matches.push(tool.def);
+        this.activatedDeferred.add(tool.name);
+        matches.push(tool);
       }
     }
     return matches;
@@ -135,10 +134,10 @@ export class ToolRegistry {
   getDeferredSummaries(): Array<{ name: string; description: string }> {
     const summaries: Array<{ name: string; description: string }> = [];
     for (const tool of this.tools.values()) {
-      if (tool.def.deferred && !this.activatedDeferred.has(tool.def.name)) {
+      if (tool.defer_loading && !this.activatedDeferred.has(tool.name)) {
         summaries.push({
-          name: tool.def.name,
-          description: tool.def.description || "",
+          name: tool.name,
+          description: tool.description || "",
         });
       }
     }

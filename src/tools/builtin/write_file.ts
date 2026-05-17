@@ -1,7 +1,7 @@
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join, dirname, basename } from "node:path";
 import { BaseTool } from "../types.js";
-import type { ToolDef } from "../types.js";
+import type { InputSchema } from "../types.js";
 
 /**
  * If a .md file (not MEMORY.md) was written to the memory directory,
@@ -60,24 +60,22 @@ async function autoUpdateMemoryIndex(filePath: string): Promise<void> {
 }
 
 export class WriteFileTool extends BaseTool {
-  def: ToolDef = {
-    name: "write_file",
-    description:
-      "Write content to a file. Creates the file if it doesn't exist, overwrites if it does.",
-    input_schema: {
-      type: "object",
-      properties: {
-        file_path: {
-          type: "string",
-          description: "The path to the file to write",
-        },
-        content: {
-          type: "string",
-          description: "The content to write to the file",
-        },
+  name = "write_file";
+  description =
+    "Write content to a file. Creates the file if it doesn't exist, overwrites if it does.";
+  input_schema: InputSchema = {
+    type: "object",
+    properties: {
+      file_path: {
+        type: "string",
+        description: "The path to the file to write",
       },
-      required: ["file_path", "content"],
+      content: {
+        type: "string",
+        description: "The content to write to the file",
+      },
     },
+    required: ["file_path", "content"],
   };
 
   async run(input: Record<string, unknown>): Promise<string> {

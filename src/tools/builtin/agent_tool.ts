@@ -1,13 +1,12 @@
 import { BaseTool } from "../types.js";
-import type { ToolDef } from "../types.js";
 import type { BaseAgent } from "../../agent.js";
 
-const agentDef: ToolDef = {
-  name: "agent",
-  description:
-    "Launch a sub-agent to handle a task autonomously. Sub-agents have isolated context and return their result. Sub-agents cannot spawn further sub-agents.",
-  input_schema: {
-    type: "object",
+export class AgentTool extends BaseTool {
+  name = "agent";
+  description =
+    "Launch a sub-agent to handle a task autonomously. Sub-agents have isolated context and return their result. Sub-agents cannot spawn further sub-agents.";
+  input_schema = {
+    type: "object" as const,
     properties: {
       description: {
         type: "string",
@@ -19,11 +18,8 @@ const agentDef: ToolDef = {
       },
     },
     required: ["description", "prompt"],
-  },
-};
+  };
 
-export class AgentTool extends BaseTool {
-  def: ToolDef = agentDef;
   private subagentFactory: (() => BaseAgent) | null = null;
 
   /** Set the factory used to create fresh sub-agents for each invocation. */

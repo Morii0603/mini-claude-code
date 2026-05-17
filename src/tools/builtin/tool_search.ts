@@ -1,13 +1,12 @@
 import { BaseTool } from "../types.js";
-import type { ToolDef } from "../types.js";
 import type { ToolRegistry } from "../registry.js";
 
-const toolSearchDef: ToolDef = {
-  name: "tool_search",
-  description:
-    "Search for available tools by name or keyword. Returns full schema definitions for matching deferred tools so you can use them.",
-  input_schema: {
-    type: "object",
+export class ToolSearchTool extends BaseTool {
+  name = "tool_search";
+  description =
+    "Search for available tools by name or keyword. Returns full schema definitions for matching deferred tools so you can use them.";
+  input_schema = {
+    type: "object" as const,
     properties: {
       query: {
         type: "string",
@@ -15,11 +14,8 @@ const toolSearchDef: ToolDef = {
       },
     },
     required: ["query"],
-  },
-};
+  };
 
-export class ToolSearchTool extends BaseTool {
-  def: ToolDef = toolSearchDef;
   private registry: ToolRegistry;
 
   constructor(registry: ToolRegistry) {

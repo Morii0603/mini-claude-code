@@ -362,32 +362,6 @@ async function runRepl(
 
     
 
-        // Skill invocation: /<skill_name> [args]
-        if (input.startsWith("/")) {
-            const spaceIdx = input.indexOf(" ");
-            const cmdName = spaceIdx > 0 ? input.slice(1, spaceIdx) : input.slice(1);
-            const cmdArgs = spaceIdx > 0 ? input.slice(spaceIdx + 1) : "";
-            const registry = getSkillRegistry();
-            const skillDoc = registry.getSkillByName(cmdName);
-            if (skillDoc && skillDoc.manifest.userInvocable) {
-              printInfo(`Invoking skill: ${skillDoc.manifest.name}`);
-              const body = skillDoc.body || registry.loadFullText(cmdName);
-              const prompt = cmdArgs
-                ? `${body}\n\nUser-provided arguments: ${cmdArgs}`
-                : body;
-              try {
-                await agent.chat(prompt);
-              } catch (e: any) {
-                if (e.name !== "AbortError" && !e.message?.includes("aborted")) {
-                  printError(e.message);
-                }
-              }
-              askQuestion();
-              return;
-            }
-            // Unknown skill or not user-invocable — fall through to normal chat
-          }
-
         try {
             await agent.chat(input);
         } catch (e: any) {
@@ -450,6 +424,7 @@ export async function main() {
 
     // Wire sub-agent: restricted tools (no "agent" tool) so sub-agents
     // cannot spawn further sub-agents.
+    
     const createSubAgent = (): SubAgent => {
       const restrictedRegistry = new ToolRegistry();
       for (const [name, tool] of registry.getAllTools()) {

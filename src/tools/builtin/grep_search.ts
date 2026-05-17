@@ -2,7 +2,7 @@ import { execSync } from "node:child_process";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { BaseTool } from "../types.js";
-import type { ToolDef } from "../types.js";
+import type { InputSchema } from "../types.js";
 
 const IS_WIN = process.platform === "win32";
 
@@ -67,30 +67,28 @@ function grepPython(
 }
 
 export class GrepSearchTool extends BaseTool {
-  def: ToolDef = {
-    name: "grep_search",
-    description:
-      "Search for a pattern in files. Returns matching lines with file paths and line numbers.",
-    input_schema: {
-      type: "object",
-      properties: {
-        pattern: {
-          type: "string",
-          description: "The regex pattern to search for",
-        },
-        path: {
-          type: "string",
-          description:
-            "Directory or file to search in. Defaults to current directory.",
-        },
-        include: {
-          type: "string",
-          description:
-            'File glob pattern to include (e.g., "*.ts", "*.py")',
-        },
+  name = "grep_search";
+  description =
+    "Search for a pattern in files. Returns matching lines with file paths and line numbers.";
+  input_schema: InputSchema = {
+    type: "object",
+    properties: {
+      pattern: {
+        type: "string",
+        description: "The regex pattern to search for",
       },
-      required: ["pattern"],
+      path: {
+        type: "string",
+        description:
+          "Directory or file to search in. Defaults to current directory.",
+      },
+      include: {
+        type: "string",
+        description:
+          'File glob pattern to include (e.g., "*.ts", "*.py")',
+      },
     },
+    required: ["pattern"],
   };
 
   async run(input: Record<string, unknown>): Promise<string> {

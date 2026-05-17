@@ -3,7 +3,7 @@ import { ClientManager } from "./client-manager.js";
 import { McpTool } from "./mcp-tool.js";
 import { ToolRegistry } from "../tools/registry.js";
 import type { McpServerDef } from "./types.js";
-import type { ToolDef } from "../tools/types.js";
+import type Anthropic from "@anthropic-ai/sdk";
 
 export type { McpServerDef, McpConfig } from "./types.js";
 export { loadMcpConfig, saveMcpConfig } from "./config.js";
@@ -23,9 +23,15 @@ export async function initMcp(
       const tools = await manager.connectServer(server);
       for (const tool of tools) {
         const fullName = manager.getToolFullName(server.name, tool.toolName);
-        const def = buildToolDef(fullName, server.name, tool);
+        const { name, description, inputSchema } = buildMcpToolDef(
+          fullName,
+          server.name,
+          tool,
+        );
         const mcpTool = new McpTool(
-          def,
+          name,
+          description,
+          inputSchema,
           async (input) => {
             return manager.callTool(server.name, tool.toolName, input);
           },
@@ -64,9 +70,15 @@ export async function addMcpServer(
 
   for (const tool of tools) {
     const fullName = manager.getToolFullName(server.name, tool.toolName);
-    const def = buildToolDef(fullName, server.name, tool);
+    const { name, description, inputSchema } = buildMcpToolDef(
+      fullName,
+      server.name,
+      tool,
+    );
     const mcpTool = new McpTool(
-      def,
+      name,
+      description,
+      inputSchema,
       async (input) => {
         return manager.callTool(server.name, tool.toolName, input);
       },
@@ -110,11 +122,11 @@ export function listMcpServers(manager: ClientManager): Array<{
   }));
 }
 
-function buildToolDef(
+function buildMcpToolDef(
   fullName: string,
   serverName: string,
   tool: { toolName: string; description?: string | undefined; inputSchema: Record<string, unknown> },
-): ToolDef {
+): { name: string; description: string; inputSchema: Anthropic.Tool.InputSchema } {
   const schema = tool.inputSchema;
   const inputSchema: Record<string, unknown> = {};
   if (schema.type === undefined) {
@@ -124,11 +136,9 @@ function buildToolDef(
     inputSchema[key] = (schema as Record<string, unknown>)[key];
   }
 
-  const def: ToolDef = {
+  return {
     name: fullName,
     description: tool.description || `MCP tool: ${tool.toolName} from ${serverName}`,
-    input_schema: inputSchema as ToolDef["input_schema"],
-    deferred: true,
+    inputSchema: inputSchema as Anthropic.Tool.InputSchema,
   };
-  return def;
 }

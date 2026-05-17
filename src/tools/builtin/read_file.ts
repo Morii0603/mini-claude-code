@@ -1,22 +1,20 @@
 import { readFile } from "node:fs/promises";
 import { BaseTool } from "../types.js";
-import type { ToolDef } from "../types.js";
+import type { InputSchema } from "../types.js";
 
 export class ReadFileTool extends BaseTool {
-  def: ToolDef = {
-    name: "read_file",
-    description:
-      "Read the contents of a file. Returns the file content with line numbers.",
-    input_schema: {
-      type: "object",
-      properties: {
-        file_path: {
-          type: "string",
-          description: "The path to the file to read",
-        },
+  name = "read_file";
+  description =
+    "Read the contents of a file. Returns the file content with line numbers.";
+  input_schema: InputSchema = {
+    type: "object",
+    properties: {
+      file_path: {
+        type: "string",
+        description: "The path to the file to read",
       },
-      required: ["file_path"],
     },
+    required: ["file_path"],
   };
 
   async run(input: Record<string, unknown>): Promise<string> {

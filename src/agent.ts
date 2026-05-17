@@ -2,7 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import chalk from "chalk";
 import * as readline from "readline";
 import { randomUUID } from "crypto";
-import type { PermissionMode, ToolRegistry } from "./tools/index.js";
+import type { BaseTool, PermissionMode, ToolRegistry } from "./tools/index.js";
 import { checkPermission } from "./tools/permission.js";
 import { buildSystemPrompt } from "./prompt.js";
 import {
@@ -40,6 +40,7 @@ export abstract class BaseAgent {
   protected abortController: AbortController | null = null;
   protected aborted: boolean = false;
   protected toolRegistry: ToolRegistry;
+  protected tools: BaseTool[] = [];
   protected thinking: boolean;
   protected model: string;
   protected messages: Anthropic.MessageParam[] = [];

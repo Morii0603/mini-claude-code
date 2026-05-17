@@ -1,26 +1,24 @@
 import { execSync } from "node:child_process";
 import { BaseTool } from "../types.js";
-import type { ToolDef } from "../types.js";
+import type { InputSchema } from "../types.js";
 
 export class RunShellTool extends BaseTool {
-  def: ToolDef = {
-    name: "run_shell",
-    description:
-      "Execute a shell command and return its output. Use this for running tests, installing packages, git operations, etc.",
-    input_schema: {
-      type: "object",
-      properties: {
-        command: {
-          type: "string",
-          description: "The shell command to execute",
-        },
-        timeout: {
-          type: "number",
-          description: "Timeout in milliseconds (default: 30000)",
-        },
+  name = "run_shell";
+  description =
+    "Execute a shell command and return its output. Use this for running tests, installing packages, git operations, etc.";
+  input_schema: InputSchema = {
+    type: "object",
+    properties: {
+      command: {
+        type: "string",
+        description: "The shell command to execute",
       },
-      required: ["command"],
+      timeout: {
+        type: "number",
+        description: "Timeout in milliseconds (default: 30000)",
+      },
     },
+    required: ["command"],
   };
 
   async run(input: Record<string, unknown>): Promise<string> {
